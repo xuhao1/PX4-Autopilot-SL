@@ -151,6 +151,7 @@ set(msg_files
 	sensor_gyro_fifo.msg
 	sensor_hygrometer.msg
 	sensor_mag.msg
+	sensor_motor_encoder.msg
 	sensor_preflight_mag.msg
 	sensor_selection.msg
 	sensors_status_imu.msg

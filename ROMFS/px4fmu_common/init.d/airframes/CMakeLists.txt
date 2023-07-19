@@ -157,6 +157,9 @@ px4_add_romfs_files(
 	# [18000, 18999] High-altitude balloons
 	18001_TF-B1
 
+	# 19000 swashplateless helicopters
+	19000_SL_Coax
+
 	# [22000, 22999] Reserve for custom models
 
 	24001_dodeca_cox

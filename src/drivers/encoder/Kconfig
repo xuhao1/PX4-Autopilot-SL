@@ -1,0 +1,9 @@
+menu "Encoders"
+    menuconfig COMMON_Encoders
+        bool "Encoder sensors"
+        default n
+        select DRIVERS_ENCODER_ECODER
+        ---help---
+            Enable default set of hygrometer sensors
+    rsource "*/Kconfig"
+endmenu #Encoders
