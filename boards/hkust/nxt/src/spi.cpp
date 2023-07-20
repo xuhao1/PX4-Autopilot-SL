@@ -49,6 +49,9 @@ constexpr px4_spi_bus_t px4_spi_buses[SPI_BUS_MAX_BUS_ITEMS] = {
 	// initSPIBus(SPI::Bus::SPI5, {
 	// 	initSPIDevice(SPIDEV_FLASH(0), SPI::CS{GPIO::PortG, GPIO::Pin7})
 	// }),
+	initSPIBus(SPI::Bus::SPI4, {
+		initSPIDevice(DRV_ENCODER_DEVTYPE_AS5047P, SPI::CS{GPIO::PortE, GPIO::Pin14}),
+	}),
 	// initSPIBusExternal(SPI::Bus::SPI4, {
 	// 	initSPIConfigExternal(SPI::CS{GPIO::PortE, GPIO::Pin13}, SPI::DRDY{GPIO::PortE, GPIO::Pin10}),
 	// 	initSPIConfigExternal(SPI::CS{GPIO::PortE, GPIO::Pin14}, SPI::DRDY{GPIO::PortE, GPIO::Pin11}),

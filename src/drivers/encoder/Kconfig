@@ -3,6 +3,7 @@ menu "Encoders"
         bool "Encoder sensors"
         default n
         select DRIVERS_ENCODER_ECODER
+        select DRIVERS_ENCODER_AS5047P
         ---help---
             Enable default set of hygrometer sensors
     rsource "*/Kconfig"

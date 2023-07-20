@@ -1,0 +1,5 @@
+menuconfig DRIVERS_ENCODER_AS5047P
+	bool "as5047p"
+	default n
+	---help---
+		Enable support for as5047p
