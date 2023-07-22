@@ -427,7 +427,7 @@
 #define GPIO_SPI3_SCK    ADJ_SLEW_RATE(GPIO_SPI3_SCK_1) /* PC10 */
 
 #define GPIO_SPI4_MISO   GPIO_SPI4_MISO_2               /* PE5 */
-#define GPIO_SPI4_MOSI   GPIO_SPI4_MOSI_2               /* PB6  */
+#define GPIO_SPI4_MOSI   GPIO_SPI4_MOSI_2               /* PE6  */
 #define GPIO_SPI4_SCK    ADJ_SLEW_RATE(GPIO_SPI4_SCK_1) /* PE12 */
 
 // #define GPIO_SPI5_MISO   GPIO_SPI5_MISO_2               /* PH7  */

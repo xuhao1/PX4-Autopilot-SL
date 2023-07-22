@@ -8,13 +8,12 @@
 AS5047PReader::AS5047PReader(const I2CSPIDriverConfig &config):
 	SPI(config),
 	I2CSPIDriver(config),
-	_cycle_perf(perf_alloc(PC_INTERVAL, "as5047p")),
-	_process_perf(perf_alloc(PC_ELAPSED, "as5047p::ProcessData")) {
+	_cycle_perf(perf_alloc(PC_ELAPSED, "as5047p")) {
+	PX4_INFO("SPI mode %d", config.spi_mode);
 }
 
 AS5047PReader::~AS5047PReader() {
 	perf_free(_cycle_perf);
-	perf_free(_process_perf);
 }
 
 
@@ -23,14 +22,17 @@ int AS5047PReader::init() {
     if (ret != OK) {
         DEVICE_DEBUG("SPI init failed (%i)", ret);
         return ret;
+    } else {
+	PX4_INFO("SPI init success");
     }
     printDebugString();
+    start();
     return PX4_OK;
 }
 
 
 void AS5047PReader::start() {
-	ScheduleOnInterval(_current_update_interval);
+    ScheduleOnInterval(_current_update_interval);
 }
 
 void AS5047PReader::reset() {
@@ -41,6 +43,19 @@ void
 AS5047PReader::RunImpl()
 {
   perf_begin(_cycle_perf);
+  real_time_angle = readAngle();
+  // Compute rotor speed using the angle with filter
+  uint64_t now = hrt_absolute_time();
+  float dt = (now - last_angle_read_time) / 1e6f;
+  last_angle_read_time = now;
+  real_time_freq = 1.0f / dt;
+  // Publish
+  data.timestamp = now;
+  data.motor_abs_angle = real_time_angle;
+  data.motor_rpm = real_time_rpm;
+  data.motor_id = motor_id;
+  _encoder_pub.publish(data);
+
   perf_end(_cycle_perf);
 }
 
@@ -48,8 +63,9 @@ uint16_t AS5047PReader::readData(uint16_t command, uint16_t nopCommand)
 {
     uint16_t rx;
     transferhword(&command, &rx, 1);
+//     PX4_INFO("readData command %d recv %d", (int)command, (int)rx);
     transferhword(&nopCommand, &rx, 1);
-    PX4_INFO("readData command %d nopCommand %d recv %d", (int)command, (int)nopCommand, (int)rx);
+//     PX4_INFO("readData nopCommand %d recv %d", (int)nopCommand, (int)rx);
     return rx;
 }
 
@@ -58,7 +74,7 @@ void AS5047PReader::writeData(uint16_t command, uint16_t value)
     uint16_t rx;
     transferhword(&command, &rx, 1);
     transferhword(&value, &rx, 1);
-    PX4_INFO("writeData command %d value %d recv %d", (int)command, (int)value, (int)rx);
+//     PX4_INFO("writeData command %d value %d", (int)command, (int)value);
 }
 
 
@@ -97,7 +113,7 @@ float AS5047PReader::readAngle() {
 	ReadDataFrame readDataFrame = readRegister(ANGLE_REG);
 	Angle angle;
 	angle.raw = readDataFrame.values.data;
-	return angle.values.cordicang/16384.*360.;
+	return ((float)angle.values.cordicang)/16384.f*2.0f*M_PI_F;
 }
 
 void AS5047PReader::writeSettings1(Settings1 values) {
@@ -203,10 +219,12 @@ bool AS5047PReader::isEven(uint16_t _data) {
 
 void AS5047PReader::print_status() {
 	I2CSPIDriverBase::print_status();
-	PX4_INFO("UART RX bytes: %d freq %.1f", (int) _bytes_rx, (double)real_time_freq);
-	PX4_INFO("AS5047P: valid %d angle %4.1fdeg turns %d rpm %4.1f", ecoder_ok, (double) (real_time_angle*M_RAD_TO_DEG_F), (int) last_multi_turn, (double)real_time_rpm);
+	PX4_INFO("AS5047p freq %.1f last read %d", (double)real_time_freq, (int) last_angle_read_time);
+	PX4_INFO("AS5047P: valid %d angle %4.1fdeg turns %d rpm %4.1f", ecoder_ok,
+		(double) (real_time_angle*M_RAD_TO_DEG_F),
+		(int) last_multi_turn,
+		(double)real_time_rpm);
 	perf_print_counter(_cycle_perf);
-	perf_print_counter(_process_perf);
 }
 
 int AS5047PReader::probe() {

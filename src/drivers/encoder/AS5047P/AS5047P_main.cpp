@@ -50,7 +50,8 @@ extern "C" __EXPORT int as5047p_main(int argc, char *argv[])
 {
 	using ThisDriver = AS5047PReader;
 	BusCLIArguments cli{false, true};
-	cli.default_spi_frequency = 5 * 1000 * 1000;
+	cli.default_spi_frequency = 100000;
+	cli.spi_mode = SPIDEV_MODE1;
 	cli.parseDefaultArguments(argc, argv);
 	const char *verb = cli.optArg();
 	if (!verb) {
@@ -60,24 +61,18 @@ extern "C" __EXPORT int as5047p_main(int argc, char *argv[])
 
 	BusInstanceIterator iterator(MODULE_NAME, cli, DRV_ENCODER_DEVTYPE_AS5047P);
 
-	// new ThisDriver
-	const px4::wq_config_t &wq_config = px4::device_bus_to_wq(DRV_ENCODER_DEVTYPE_AS5047P);
-	I2CSPIDriverConfig driver_config{cli, iterator, wq_config};
-	ThisDriver *interface = new ThisDriver(driver_config);
-	interface->init();
-	interface->RunImpl();
-	// if (!strcmp(verb, "start")) {
-	// 	PX4_INFO("AS5047p try to start up");
-	// 	return ThisDriver::module_start(cli, iterator);
-	// }
+	if (!strcmp(verb, "start")) {
+		PX4_INFO("AS5047p try to start up");
+		return ThisDriver::module_start(cli, iterator);
+	}
 
-	// if (!strcmp(verb, "stop")) {
-	// 	return ThisDriver::module_stop(iterator);
-	// }
+	if (!strcmp(verb, "stop")) {
+		return ThisDriver::module_stop(iterator);
+	}
 
-	// if (!strcmp(verb, "status")) {
-	// 	return ThisDriver::module_status(iterator);
-	// }
+	if (!strcmp(verb, "status")) {
+		return ThisDriver::module_status(iterator);
+	}
 
 	ThisDriver::print_usage();
 	return -1;

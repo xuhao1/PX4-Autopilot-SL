@@ -169,7 +169,6 @@ typedef union {
 
 class AS5047PReader : public device::SPI, public I2CSPIDriver<AS5047PReader>{
 	perf_counter_t	_cycle_perf{0};
-	perf_counter_t	_process_perf{0};
 	bool _initialized{false};
 	uORB::Publication<sensor_motor_encoder_s>	_encoder_pub{ORB_ID(sensor_motor_encoder)};			/**< rate setpoint publication */
 	uint64_t last_ask_time{0};
@@ -177,13 +176,14 @@ class AS5047PReader : public device::SPI, public I2CSPIDriver<AS5047PReader>{
 	int32_t num_msgs{0};
 	float real_time_freq {0};
 	int32_t last_multi_turn{0};
-	uint64_t last_multi_turn_time{0};
+	uint64_t last_angle_read_time{0};
 
 	uint8_t ecoder_ok {0};
 	float real_time_angle {0};
 	float real_time_rpm {0};
 	uint32_t _bytes_rx {0};
-	sensor_motor_encoder_s data;
+    uint8_t motor_id {0};
+	sensor_motor_encoder_s data {};
 
 	void reset();
 public:
