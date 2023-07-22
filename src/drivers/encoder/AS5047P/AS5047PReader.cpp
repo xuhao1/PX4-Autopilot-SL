@@ -32,7 +32,7 @@ int AS5047PReader::init() {
 
 
 void AS5047PReader::start() {
-    ScheduleOnInterval(_current_update_interval);
+    	ScheduleOnInterval(_current_update_interval);
 }
 
 void AS5047PReader::reset() {
@@ -42,21 +42,22 @@ void AS5047PReader::reset() {
 void
 AS5047PReader::RunImpl()
 {
-  perf_begin(_cycle_perf);
-  real_time_angle = readAngle();
-  // Compute rotor speed using the angle with filter
-  uint64_t now = hrt_absolute_time();
-  float dt = (now - last_angle_read_time) / 1e6f;
-  last_angle_read_time = now;
-  real_time_freq = 1.0f / dt;
-  // Publish
-  data.timestamp = now;
-  data.motor_abs_angle = real_time_angle;
-  data.motor_rpm = real_time_rpm;
-  data.motor_id = motor_id;
-  _encoder_pub.publish(data);
-
-  perf_end(_cycle_perf);
+	perf_begin(_cycle_perf);
+	if (!_is_print_debug) {
+		real_time_angle = readAngle();
+		// Compute rotor speed using the angle with filter
+		uint64_t now = hrt_absolute_time();
+		float dt = (now - last_angle_read_time) / 1e6f;
+		last_angle_read_time = now;
+		real_time_freq = 1.0f / dt;
+		// Publish
+		data.timestamp = now;
+		data.motor_abs_angle = real_time_angle;
+		data.motor_rpm = real_time_rpm;
+		data.motor_id = motor_id;
+		_encoder_pub.publish(data);
+	}
+	perf_end(_cycle_perf);
 }
 
 uint16_t AS5047PReader::readData(uint16_t command, uint16_t nopCommand)
@@ -128,6 +129,7 @@ void AS5047PReader::writeZeroPosition(Zposm zposm, Zposl zposl){
 }
 
 void AS5047PReader::printDebugString() {
+	_is_print_debug = true;
 	ReadDataFrame readDataFrame;
 	readDataFrame = readRegister(ERRFL_REG);
 	Errfl errfl;
@@ -189,6 +191,7 @@ void AS5047PReader::printDebugString() {
     PX4_INFO("|------- SETTINGS2 Register: Reading Error: %d UVWPP: %d HYS: %d ABIRES: %d", readDataFrame.values.ef, settings2.values.uvwpp, settings2.values.hys, settings2.values.abires);
 
     PX4_INFO("==============================");
+	_is_print_debug = false;
 
 /*ANGLECOM_REG 	0x3FFF
 
@@ -224,6 +227,7 @@ void AS5047PReader::print_status() {
 		(double) (real_time_angle*M_RAD_TO_DEG_F),
 		(int) last_multi_turn,
 		(double)real_time_rpm);
+	printDebugString();
 	perf_print_counter(_cycle_perf);
 }
 

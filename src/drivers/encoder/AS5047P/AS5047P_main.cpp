@@ -50,7 +50,7 @@ extern "C" __EXPORT int as5047p_main(int argc, char *argv[])
 {
 	using ThisDriver = AS5047PReader;
 	BusCLIArguments cli{false, true};
-	cli.default_spi_frequency = 100000;
+	cli.default_spi_frequency = 10000000;
 	cli.spi_mode = SPIDEV_MODE1;
 	cli.parseDefaultArguments(argc, argv);
 	const char *verb = cli.optArg();

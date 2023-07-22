@@ -171,6 +171,7 @@ class AS5047PReader : public device::SPI, public I2CSPIDriver<AS5047PReader>{
 	perf_counter_t	_cycle_perf{0};
 	bool _initialized{false};
 	uORB::Publication<sensor_motor_encoder_s>	_encoder_pub{ORB_ID(sensor_motor_encoder)};			/**< rate setpoint publication */
+    bool _is_print_debug {false};
 	uint64_t last_ask_time{0};
 	uint64_t first_read_time{0};
 	int32_t num_msgs{0};
