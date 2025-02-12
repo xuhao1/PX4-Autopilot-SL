@@ -1,0 +1,2062 @@
+diff --git a/ROMFS/px4fmu_common/init.d/CMakeLists.txt b/ROMFS/px4fmu_common/init.d/CMakeLists.txt
+index ef190544ae..2449422983 100644
+--- a/ROMFS/px4fmu_common/init.d/CMakeLists.txt
++++ b/ROMFS/px4fmu_common/init.d/CMakeLists.txt
+@@ -46,6 +46,8 @@ px4_add_romfs_files(
+ 	rc.logging
+ 	rc.mc_apps
+ 	rc.mc_defaults
++	rc.sl_apps
++	rc.sl_defaults
+ 	rcS
+ 	rc.sensors
+ 	rc.thermal_cal
+diff --git a/ROMFS/px4fmu_common/init.d/airframes/19000_SL_Coax b/ROMFS/px4fmu_common/init.d/airframes/19000_SL_Coax
+new file mode 100644
+index 0000000000..b546c8d5f9
+--- /dev/null
++++ b/ROMFS/px4fmu_common/init.d/airframes/19000_SL_Coax
+@@ -0,0 +1,21 @@
++#!/bin/sh
++#
++# @name ThunderFly balloon TF-B1
++#
++# @type Balloon
++# @class Balloon
++#
++#
++# @url https://github.com/ThunderFly-aerospace/TF-B1/
++# @maintainer ThunderFly s.r.o.
++#
++# @board px4_fmu-v2 exclude
++# @board bitcraze_crazyflie exclude
++#
++
++. ${R}etc/init.d/rc.sl_defaults
++
++
++set MIXER IO_pass
++set MIXER_AUX pass
++set PWM_OUT 1234
+diff --git a/ROMFS/px4fmu_common/init.d/airframes/CMakeLists.txt b/ROMFS/px4fmu_common/init.d/airframes/CMakeLists.txt
+index f1ce40b6aa..6c33775b26 100644
+--- a/ROMFS/px4fmu_common/init.d/airframes/CMakeLists.txt
++++ b/ROMFS/px4fmu_common/init.d/airframes/CMakeLists.txt
+@@ -156,6 +156,9 @@ px4_add_romfs_files(
+ 	# [18000, 18999] High-altitude balloons
+ 	18001_TF-B1
+ 
++	# 19000 swashplateless helicopters
++	19000_SL_Coax
++
+ 	# [22000, 22999] Reserve for custom models
+ 
+ 	24001_dodeca_cox
+diff --git a/ROMFS/px4fmu_common/init.d/rc.sl_apps b/ROMFS/px4fmu_common/init.d/rc.sl_apps
+new file mode 100644
+index 0000000000..7d8547a714
+--- /dev/null
++++ b/ROMFS/px4fmu_common/init.d/rc.sl_apps
+@@ -0,0 +1,73 @@
++#!/bin/sh
++#
++# Standard apps for swashplateless helicopeter. Attitude/Position estimator, Attitude/Position control.
++#
++# NOTE: Script variables are declared/initialized/unset in the rcS script.
++#
++
++###############################################################################
++#                       Begin Estimator Group Selection                       #
++###############################################################################
++
++#
++# LPE
++#
++if param compare SYS_MC_EST_GROUP 1
++then
++	#
++	# Try to start LPE. If it fails, start EKF2 as a default.
++	# Unfortunately we do not build it on px4_fmu-v2 due to a limited flash.
++	#
++	if attitude_estimator_q start
++	then
++		echo "WARN [init] Estimator LPE unsupported, EKF2 recommended."
++		local_position_estimator start
++	else
++		echo "ERROR [init] Estimator LPE not available. Using EKF2"
++		param set SYS_MC_EST_GROUP 2
++		param save
++		reboot
++	fi
++else
++	#
++	# Q estimator (attitude estimation only)
++	#
++	if param compare SYS_MC_EST_GROUP 3
++	then
++		attitude_estimator_q start
++	else
++		#
++		# EKF2
++		#
++		param set SYS_MC_EST_GROUP 2
++		ekf2 start &
++	fi
++fi
++
++###############################################################################
++#                        End Estimator Group Selection                        #
++###############################################################################
++
++#
++# Start Multicopter Rate Controller.
++#
++mc_rate_control start
++
++#
++# Start Multicopter Attitude Controller.
++#
++mc_att_control start
++
++#
++# Start Multicopter Position Controller.
++#
++mc_hover_thrust_estimator start
++flight_mode_manager start
++mc_pos_control start
++ecoder start -d /dev/ttyS2 -D /dev/ttyS1
++swashplateless_mixer start
++
++#
++# Start Multicopter Land Detector.
++#
++land_detector start multicopter
+diff --git a/ROMFS/px4fmu_common/init.d/rc.sl_defaults b/ROMFS/px4fmu_common/init.d/rc.sl_defaults
+new file mode 100644
+index 0000000000..f1bd87c6d4
+--- /dev/null
++++ b/ROMFS/px4fmu_common/init.d/rc.sl_defaults
+@@ -0,0 +1,28 @@
++#!/bin/sh
++#
++# Multicopter default parameters.
++#
++# NOTE: Script variables are declared/initialized/unset in the rcS script.
++#
++
++set VEHICLE_TYPE sl
++
++param set-default IMU_GYRO_RATEMAX 800
++
++param set-default NAV_ACC_RAD 2
++
++param set-default RTL_RETURN_ALT 30
++param set-default RTL_DESCEND_ALT 10
++
++param set-default PWM_MAIN_MAX 1950
++param set-default PWM_MAIN_MIN 1075
++param set-default PWM_MAIN_RATE 400
++
++param set-default GPS_UBX_DYNMODEL 6
++
++#
++# This is the gimbal pass mixer.
++#
++set MIXER_AUX SL_pass
++
++set PWM_AUX_OUT 1234
+diff --git a/ROMFS/px4fmu_common/init.d/rc.vehicle_setup b/ROMFS/px4fmu_common/init.d/rc.vehicle_setup
+index e9f01eae5d..b159c462f4 100644
+--- a/ROMFS/px4fmu_common/init.d/rc.vehicle_setup
++++ b/ROMFS/px4fmu_common/init.d/rc.vehicle_setup
+@@ -84,6 +84,25 @@ then
+ 	. ${R}etc/init.d/rc.mc_apps
+ fi
+ 
++if [ $VEHICLE_TYPE = sl ]
++then
++	set MIXER SL_pass
++	if [ $MAV_TYPE = none ]
++	then
++		# Set a default MAV_TYPE = 2 if not defined.
++		set MAV_TYPE 3
++	fi
++
++	# Set the mav type parameter.
++	param set MAV_TYPE ${MAV_TYPE}
++
++	# Load mixer and configure outputs.
++	. ${R}etc/init.d/rc.interface
++
++	# Start standard multicopter apps.
++	. ${R}etc/init.d/rc.sl_apps
++fi
++
+ #
+ # UGV setup.
+ #
+diff --git a/ROMFS/px4fmu_common/mixers/CMakeLists.txt b/ROMFS/px4fmu_common/mixers/CMakeLists.txt
+index df861065a2..67ca035876 100644
+--- a/ROMFS/px4fmu_common/mixers/CMakeLists.txt
++++ b/ROMFS/px4fmu_common/mixers/CMakeLists.txt
+@@ -80,6 +80,7 @@ px4_add_romfs_files(
+ 	rover_diff_and_servo.main.mix
+ 	rover_generic.main.mix
+ 	standard_vtol_hitl.main.mix
++	SL_pass.main.mix
+ 	TF-AutoG2.main.mix
+ 	tilt_quad.aux.mix
+ 	tilt_quad.main.mix
+diff --git a/ROMFS/px4fmu_common/mixers/SL_pass.main.mix b/ROMFS/px4fmu_common/mixers/SL_pass.main.mix
+new file mode 100644
+index 0000000000..71eff7f7cb
+--- /dev/null
++++ b/ROMFS/px4fmu_common/mixers/SL_pass.main.mix
+@@ -0,0 +1,30 @@
++Passthrough mixer for PX4IO
++============================
++
++This file defines passthrough mixers suitable for testing.
++
++Channel group 5, channels 0-7 are passed directly through to the outputs.
++
++M: 1
++S: 5 0      0  20000 -10000 -10000  10000
++
++M: 1
++S: 5 1      0  20000 -10000 -10000  10000
++
++M: 1
++S: 5 2      0  20000 -10000 -10000  10000
++
++M: 1
++S: 5 3      0  20000 -10000 -10000  10000
++
++M: 1
++S: 5 4      0  20000 -10000 -10000  10000
++
++M: 1
++S: 5 5      0  20000 -10000 -10000  10000
++
++M: 1
++S: 5 6      0  20000 -10000 -10000  10000
++
++M: 1
++S: 5 7      0  20000 -10000 -10000  10000
+diff --git a/boards/JHE/f405aio/bootloader/omnibus_f4sd_bootloader.bin b/boards/JHE/f405aio/bootloader/omnibus_f4sd_bootloader.bin
+deleted file mode 100644
+index be73a7f0ed..0000000000
+Binary files a/boards/JHE/f405aio/bootloader/omnibus_f4sd_bootloader.bin and /dev/null differ
+diff --git a/boards/JHE/f405aiopro/bootloader/jhef405aiopro_bl.bin b/boards/JHE/f405aiopro/bootloader/jhef405aiopro_bl.bin
+new file mode 100755
+index 0000000000..7202d0b380
+Binary files /dev/null and b/boards/JHE/f405aiopro/bootloader/jhef405aiopro_bl.bin differ
+diff --git a/boards/JHE/f405aio/default.cmake b/boards/JHE/f405aiopro/default.cmake
+similarity index 92%
+rename from boards/JHE/f405aio/default.cmake
+rename to boards/JHE/f405aiopro/default.cmake
+index 34e862b4dc..6a883cd51a 100644
+--- a/boards/JHE/f405aio/default.cmake
++++ b/boards/JHE/f405aiopro/default.cmake
+@@ -2,7 +2,7 @@
+ px4_add_board(
+ 	PLATFORM nuttx
+ 	VENDOR JHE
+-	MODEL f405aio
++	MODEL f405aiopro
+ 	LABEL default
+ 	TOOLCHAIN arm-none-eabi
+ 	ARCHITECTURE cortex-m4
+@@ -10,8 +10,8 @@ px4_add_board(
+ 	ROMFSROOT px4fmu_common
+ 	CONSTRAINED_FLASH
+ 	SERIAL_PORTS
+-		TEL1:/dev/ttyS0
+-		TEL2:/dev/ttyS1
++		TEL1:/dev/ttyS5
++		TEL2:/dev/ttyS0
+ 		RC:/dev/ttyS3 # UART4
+ 	DRIVERS
+ 		adc/board_adc
+@@ -30,7 +30,7 @@ px4_add_board(
+ 		#magnetometer # all available magnetometer drivers
+ 		#magnetometer/hmc5883
+ 		#optical_flow # all available optical flow drivers
+-		osd
++		#osd
+ 		#pca9685
+ 		#pwm_input
+ 		#pwm_out_sim
+@@ -38,9 +38,10 @@ px4_add_board(
+ 		rc_input
+ 		#telemetry # all available telemetry drivers
+ 		telemetry/frsky_telemetry
++		encoder/ecoder20
+ 	MODULES
+ 		#airspeed_selector
+-		attitude_estimator_q
++		#attitude_estimator_q
+ 		battery_status
+ 		#camera_feedback
+ 		commander
+@@ -60,6 +61,7 @@ px4_add_board(
+ 		logger
+ 		mavlink
+ 		mc_att_control
++		swashplateless_mixer
+ 		mc_hover_thrust_estimator
+ 		mc_pos_control
+ 		mc_rate_control
+@@ -79,7 +81,7 @@ px4_add_board(
+ 		dmesg
+ 		dumpfile
+ 		esc_calib
+-		#gpio
++		gpio
+ 		hardfault_log
+ 		i2cdetect
+ 		led_control
+diff --git a/boards/JHE/f405aio/firmware.prototype b/boards/JHE/f405aiopro/firmware.prototype
+similarity index 64%
+rename from boards/JHE/f405aio/firmware.prototype
+rename to boards/JHE/f405aiopro/firmware.prototype
+index 49fa70e23b..a8a0dcdbf1 100644
+--- a/boards/JHE/f405aio/firmware.prototype
++++ b/boards/JHE/f405aiopro/firmware.prototype
+@@ -1,7 +1,7 @@
+ {
+-    "board_id": 42,
+-    "magic": "JHEF405AIO",
+-    "description": "Firmware for the JHEF405AIO board",
++    "board_id": 43,
++    "magic": "JHEF405AIOPRO",
++    "description": "Firmware for the JHEF405AIOPro board",
+     "image": "",
+     "build_time": 0,
+     "summary": "PX4/JHEF405AIO",
+diff --git a/boards/JHE/f405aio/init/rc.board_defaults b/boards/JHE/f405aiopro/init/rc.board_defaults
+similarity index 100%
+rename from boards/JHE/f405aio/init/rc.board_defaults
+rename to boards/JHE/f405aiopro/init/rc.board_defaults
+diff --git a/boards/JHE/f405aio/init/rc.board_extras b/boards/JHE/f405aiopro/init/rc.board_extras
+similarity index 100%
+rename from boards/JHE/f405aio/init/rc.board_extras
+rename to boards/JHE/f405aiopro/init/rc.board_extras
+diff --git a/boards/JHE/f405aio/init/rc.board_mavlink b/boards/JHE/f405aiopro/init/rc.board_mavlink
+similarity index 100%
+rename from boards/JHE/f405aio/init/rc.board_mavlink
+rename to boards/JHE/f405aiopro/init/rc.board_mavlink
+diff --git a/boards/JHE/f405aio/init/rc.board_sensors b/boards/JHE/f405aiopro/init/rc.board_sensors
+similarity index 100%
+rename from boards/JHE/f405aio/init/rc.board_sensors
+rename to boards/JHE/f405aiopro/init/rc.board_sensors
+diff --git a/boards/JHE/f405aio/nuttx-config/include/board.h b/boards/JHE/f405aiopro/nuttx-config/include/board.h
+similarity index 96%
+rename from boards/JHE/f405aio/nuttx-config/include/board.h
+rename to boards/JHE/f405aiopro/nuttx-config/include/board.h
+index 014b6469ae..ba1f7515a2 100644
+--- a/boards/JHE/f405aio/nuttx-config/include/board.h
++++ b/boards/JHE/f405aiopro/nuttx-config/include/board.h
+@@ -111,11 +111,11 @@
+  */
+ 
+ #define STM32_PLLCFG_PLLM       RCC_PLLCFG_PLLM(8)
+-#define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(336)
++#define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(480)
+ #define STM32_PLLCFG_PLLP       RCC_PLLCFG_PLLP_2
+-#define STM32_PLLCFG_PLLQ       RCC_PLLCFG_PLLQ(7)
++#define STM32_PLLCFG_PLLQ       RCC_PLLCFG_PLLQ(10)
+ 
+-#define STM32_SYSCLK_FREQUENCY  168000000ul
++#define STM32_SYSCLK_FREQUENCY  240000000ul
+ 
+ /* AHB clock (HCLK) is SYSCLK (168MHz) */
+ 
+@@ -248,9 +248,11 @@
+ 
+ #define GPIO_USART2_RX	GPIO_USART2_RX_2
+ #define GPIO_USART2_TX	GPIO_USART2_TX_2
++#define GPIO_USART2_RS485_DIR (GPIO_OUTPUT | GPIO_PUSHPULL | GPIO_SPEED_100MHz | GPIO_PORTA | GPIO_PIN9 | GPIO_OUTPUT_CLEAR)
+ 
+ #define GPIO_USART3_RX	GPIO_USART3_RX_1
+ #define GPIO_USART3_TX	GPIO_USART3_TX_1
++#define GPIO_USART3_RS485_DIR (GPIO_OUTPUT | GPIO_PUSHPULL | GPIO_SPEED_100MHz | GPIO_PORTB | GPIO_PIN14 | GPIO_OUTPUT_CLEAR)
+ 
+ #define GPIO_UART4_RX	GPIO_UART4_RX_1
+ #define GPIO_UART4_TX	GPIO_UART4_TX_1
+diff --git a/boards/JHE/f405aio/nuttx-config/include/board_dma_map.h b/boards/JHE/f405aiopro/nuttx-config/include/board_dma_map.h
+similarity index 97%
+rename from boards/JHE/f405aio/nuttx-config/include/board_dma_map.h
+rename to boards/JHE/f405aiopro/nuttx-config/include/board_dma_map.h
+index d54cbdfecb..4c83b5fe12 100644
+--- a/boards/JHE/f405aio/nuttx-config/include/board_dma_map.h
++++ b/boards/JHE/f405aiopro/nuttx-config/include/board_dma_map.h
+@@ -86,9 +86,10 @@
+ //--------------------------------------------//---------------------------//----------------
+ #define DMACHAN_SPI1_RX    DMAMAP_SPI1_RX_1   // DMA2, Stream 0, Channel 3    (SPI1 RX)
+ #define DMAMAP_USART6_RX   DMAMAP_USART6_RX_1 // DMA2, Stream 1, Channel 4
++#define DMAMAP_USART6_TX   DMAMAP_USART6_TX_2 // DMA2, Stream 1, Channel 4
++#define DMAMAP_USART2_RX   DMAMAP_USART2_RX_1 // DMA2, Stream 1, Channel 4
+ #define DMAMAP_USART1_RX   DMAMAP_USART1_RX_1 // DMA2, Stream 2, Channel 4
+ #define DMACHAN_SPI1_TX    DMAMAP_SPI1_TX_1   // DMA2, Stream 3, Channel 3    (SPI1 TX)
+-//      AVAILABLE                             // DMA2, Stream 4
+-//      AVAILABLE                             // DMA2, Stream 5
++#define DMAMAP_USART3_RX   DMAMAP_USART3_RX_1 // DMA2, Stream 1, Channel 4
+ #define DMAMAP_SDIO        DMAMAP_SDIO_2      // DMA2, Stream 6, Channel 4
+ //      AVAILABLE                             // DMA2, Stream 7
+diff --git a/boards/JHE/f405aio/nuttx-config/nsh/defconfig b/boards/JHE/f405aiopro/nuttx-config/nsh/defconfig
+similarity index 96%
+rename from boards/JHE/f405aio/nuttx-config/nsh/defconfig
+rename to boards/JHE/f405aiopro/nuttx-config/nsh/defconfig
+index 78e3f4af6b..32cbf711bf 100644
+--- a/boards/JHE/f405aio/nuttx-config/nsh/defconfig
++++ b/boards/JHE/f405aiopro/nuttx-config/nsh/defconfig
+@@ -166,11 +166,11 @@ CONFIG_STM32_SPI_DMA=y
+ CONFIG_STM32_SPI_DMATHRESHOLD=8
+ CONFIG_STM32_TIM1=y
+ CONFIG_STM32_TIM5=y
++CONFIG_STM32_UART4=y
++CONFIG_STM32_UART5=y
+ CONFIG_STM32_USART1=y
+ CONFIG_STM32_USART2=y
+ CONFIG_STM32_USART3=y
+-CONFIG_STM32_UART4=y
+-CONFIG_STM32_UART5=y
+ CONFIG_STM32_USART6=y
+ CONFIG_STM32_USART_BREAKS=y
+ CONFIG_STM32_USART_SINGLEWIRE=y
+@@ -178,28 +178,33 @@ CONFIG_STM32_WWDG=y
+ CONFIG_SYSTEM_CDCACM=y
+ CONFIG_SYSTEM_NSH=y
+ CONFIG_TASK_NAME_SIZE=24
++CONFIG_UART4_BAUD=57600
++CONFIG_UART4_RXBUFSIZE=300
++CONFIG_UART4_TXBUFSIZE=300
++CONFIG_UART5_BAUD=57600
++CONFIG_UART5_RXBUFSIZE=300
++CONFIG_UART5_TXBUFSIZE=300
+ CONFIG_USART1_RXBUFSIZE=300
+ CONFIG_USART1_RXDMA=y
+ CONFIG_USART1_TXBUFSIZE=300
+-CONFIG_USART2_BAUD=57600
++CONFIG_USART2_BAUD=2500000
++CONFIG_USART2_RXDMA=y
++CONFIG_USART2_RS485=y
+ CONFIG_USART2_RXBUFSIZE=300
+ CONFIG_USART2_TXBUFSIZE=300
+-CONFIG_USART3_BAUD=57600
++CONFIG_USART3_BAUD=2500000
+ CONFIG_USART3_RXBUFSIZE=300
+ CONFIG_USART3_TXBUFSIZE=300
+-CONFIG_UART4_BAUD=57600
+-CONFIG_UART4_RXBUFSIZE=300
+-CONFIG_UART4_TXBUFSIZE=300
+-CONFIG_UART5_BAUD=57600
+-CONFIG_UART5_RXBUFSIZE=300
+-CONFIG_UART5_TXBUFSIZE=300
++# CONFIG_USART3_RXDMA=y
++CONFIG_USART3_RS485=y
+ CONFIG_USART6_BAUD=57600
+ CONFIG_USART6_RXBUFSIZE=300
++CONFIG_USART6_TXDMA=y
+ CONFIG_USART6_RXDMA=y
+ CONFIG_USART6_TXBUFSIZE=300
+ CONFIG_USBDEV=y
+ CONFIG_USBDEV_BUSPOWERED=y
+ CONFIG_USBDEV_MAXPOWER=500
+-CONFIG_USEC_PER_TICK=1000
++CONFIG_USEC_PER_TICK=200
+ CONFIG_USERMAIN_STACKSIZE=2944
+ CONFIG_USER_ENTRYPOINT="nsh_main"
+diff --git a/boards/JHE/f405aio/nuttx-config/scripts/script.ld b/boards/JHE/f405aiopro/nuttx-config/scripts/script.ld
+similarity index 100%
+rename from boards/JHE/f405aio/nuttx-config/scripts/script.ld
+rename to boards/JHE/f405aiopro/nuttx-config/scripts/script.ld
+diff --git a/boards/JHE/f405aio/src/CMakeLists.txt b/boards/JHE/f405aiopro/src/CMakeLists.txt
+similarity index 100%
+rename from boards/JHE/f405aio/src/CMakeLists.txt
+rename to boards/JHE/f405aiopro/src/CMakeLists.txt
+diff --git a/boards/JHE/f405aio/src/board_config.h b/boards/JHE/f405aiopro/src/board_config.h
+similarity index 100%
+rename from boards/JHE/f405aio/src/board_config.h
+rename to boards/JHE/f405aiopro/src/board_config.h
+diff --git a/boards/JHE/f405aio/src/i2c.cpp b/boards/JHE/f405aiopro/src/i2c.cpp
+similarity index 100%
+rename from boards/JHE/f405aio/src/i2c.cpp
+rename to boards/JHE/f405aiopro/src/i2c.cpp
+diff --git a/boards/JHE/f405aio/src/init.c b/boards/JHE/f405aiopro/src/init.c
+similarity index 100%
+rename from boards/JHE/f405aio/src/init.c
+rename to boards/JHE/f405aiopro/src/init.c
+diff --git a/boards/JHE/f405aio/src/led.c b/boards/JHE/f405aiopro/src/led.c
+similarity index 100%
+rename from boards/JHE/f405aio/src/led.c
+rename to boards/JHE/f405aiopro/src/led.c
+diff --git a/boards/JHE/f405aio/src/spi.cpp b/boards/JHE/f405aiopro/src/spi.cpp
+similarity index 100%
+rename from boards/JHE/f405aio/src/spi.cpp
+rename to boards/JHE/f405aiopro/src/spi.cpp
+diff --git a/boards/JHE/f405aio/src/timer_config.cpp b/boards/JHE/f405aiopro/src/timer_config.cpp
+similarity index 100%
+rename from boards/JHE/f405aio/src/timer_config.cpp
+rename to boards/JHE/f405aiopro/src/timer_config.cpp
+diff --git a/boards/JHE/f405aio/src/usb.c b/boards/JHE/f405aiopro/src/usb.c
+similarity index 100%
+rename from boards/JHE/f405aio/src/usb.c
+rename to boards/JHE/f405aiopro/src/usb.c
+diff --git a/msg/CMakeLists.txt b/msg/CMakeLists.txt
+index b66c6e41b5..02de42a905 100644
+--- a/msg/CMakeLists.txt
++++ b/msg/CMakeLists.txt
+@@ -136,6 +136,7 @@ set(msg_files
+ 	sensor_preflight_mag.msg
+ 	sensor_selection.msg
+ 	sensors_status_imu.msg
++	sensor_motor_encoder.msg
+ 	system_power.msg
+ 	takeoff_status.msg
+ 	task_stack_info.msg
+diff --git a/msg/sensor_motor_encoder.msg b/msg/sensor_motor_encoder.msg
+new file mode 100644
+index 0000000000..b966d88896
+--- /dev/null
++++ b/msg/sensor_motor_encoder.msg
+@@ -0,0 +1,8 @@
++#
++#  Motor encoder topic
++#
++uint64 timestamp					# time since system start (microseconds)
++uint8 motor_id
++float32 motor_rpm						# Motor RPM, negative for reverse rotation [RPM] - if supported
++float32 motor_abs_angle
++# int64 multi_turns
+diff --git a/platforms/common/include/px4_platform_common/px4_work_queue/WorkQueueManager.hpp b/platforms/common/include/px4_platform_common/px4_work_queue/WorkQueueManager.hpp
+index 167ae858ee..1372c17b6b 100644
+--- a/platforms/common/include/px4_platform_common/px4_work_queue/WorkQueueManager.hpp
++++ b/platforms/common/include/px4_platform_common/px4_work_queue/WorkQueueManager.hpp
+@@ -50,6 +50,7 @@ namespace wq_configurations
+ {
+ static constexpr wq_config_t rate_ctrl{"wq:rate_ctrl", 1952, 0}; // PX4 inner loop highest priority
+ static constexpr wq_config_t ctrl_alloc{"wq:ctrl_alloc", 9500, 0}; // PX4 control allocation, same priority as rate_ctrl
++static constexpr wq_config_t sl_mixer{"wq:sl_mixer", 2336, 0}; // PX4 sl mixer, same priority as rate_ctrl
+ 
+ static constexpr wq_config_t SPI0{"wq:SPI0", 2336, -1};
+ static constexpr wq_config_t SPI1{"wq:SPI1", 2336, -2};
+@@ -65,6 +66,9 @@ static constexpr wq_config_t I2C2{"wq:I2C2", 2336, -10};
+ static constexpr wq_config_t I2C3{"wq:I2C3", 2336, -11};
+ static constexpr wq_config_t I2C4{"wq:I2C4", 2336, -12};
+ 
++static constexpr wq_config_t motor_encoder0{"wq:ECoder0", 2240, -12}; //Encoder 0 is the high priority as sensor
++static constexpr wq_config_t motor_encoder1{"wq:ECoder1", 2240, -12}; //Encoder 1 is the high priority as sensor
++
+ // PX4 att/pos controllers, highest priority after sensors.
+ static constexpr wq_config_t nav_and_controllers{"wq:nav_and_controllers", 2240, -13};
+ 
+diff --git a/src/drivers/encoder/ecoder20/CMakeLists.txt b/src/drivers/encoder/ecoder20/CMakeLists.txt
+new file mode 100644
+index 0000000000..0d56858ae4
+--- /dev/null
++++ b/src/drivers/encoder/ecoder20/CMakeLists.txt
+@@ -0,0 +1,42 @@
++############################################################################
++#
++#   Copyright (c) 2015 PX4 Development Team. All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++#
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in
++#    the documentation and/or other materials provided with the
++#    distribution.
++# 3. Neither the name PX4 nor the names of its contributors may be
++#    used to endorse or promote products derived from this software
++#    without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
++# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
++# OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++# AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
++# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++# POSSIBILITY OF SUCH DAMAGE.
++#
++############################################################################
++px4_add_module(
++	MODULE drivers__ecoder
++	MAIN ecoder
++	COMPILE_FLAGS
++	SRCS
++		ECoder.cpp
++		ECoderReader.cpp
++	MODULE_CONFIG
++		module.yaml
++	)
+diff --git a/src/drivers/encoder/ecoder20/ECoder.cpp b/src/drivers/encoder/ecoder20/ECoder.cpp
+new file mode 100644
+index 0000000000..c62834bff0
+--- /dev/null
++++ b/src/drivers/encoder/ecoder20/ECoder.cpp
+@@ -0,0 +1,165 @@
++/****************************************************************************
++ *
++ *   Copyright (c) 2012-2021 PX4 Development Team. All rights reserved.
++ *
++ * Redistributn and use in source and binary forms, with or without
++ * modificatn, are permitted provided that the following conditns
++ * are met:
++ *
++ * 1. Redistributns of source code must retain the above copyright
++ *    notice, this list of conditns and the following disclaimer.
++ * 2. Redistributns in binary form must reproduce the above copyright
++ *    notice, this list of conditns and the following disclaimer in
++ *    the documentatn and/or other materials provided with the
++ *    distributn.
++ * 3. Neither the name PX4 nor the names of its contributors may be
++ *    used to endorse or promote products derived from this software
++ *    without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
++ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
++ * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ *
++ ****************************************************************************/
++
++#include "ECoder.hpp"
++#include <termios.h>
++#include <fcntl.h>
++
++using namespace time_literals;
++
++ECoder::ECoder(const char *device0, const char * device1) :
++	ModuleParams(nullptr),
++	_publish_interval_perf(perf_alloc(PC_INTERVAL, MODULE_NAME": publish interval"))
++{
++	if (device0) {
++		PX4_INFO("Start ecoder 0 on %s", device0);
++		reader0 = new ECoderReader("ecoder_0", 0, device0);
++	}
++	if (device1) {
++		PX4_INFO("start ecoder 1 on %s", device1);
++		reader1 = new ECoderReader("ecoder_1", 1, device1);
++	}
++}
++
++ECoder::~ECoder()
++{
++	perf_free(_publish_interval_perf);
++}
++
++int
++ECoder::task_spawn(int argc, char *argv[])
++{
++	bool error_flag = false;
++
++	int myoptind = 1;
++	int ch;
++	const char *myoptarg = nullptr;
++	const char *device0 = nullptr;
++	const char *device1 = nullptr;
++
++	while ((ch = px4_getopt(argc, argv, "d:D:", &myoptind, &myoptarg)) != EOF) {
++		switch (ch) {
++		case 'd':
++			device0 = myoptarg;
++			break;
++		case 'D':
++			device1 = myoptarg;
++			break;
++		case '?':
++			error_flag = true;
++			break;
++
++		default:
++			PX4_WARN("unrecognized flag");
++			error_flag = true;
++			break;
++		}
++	}
++
++	if (error_flag) {
++		return -1;
++	}
++
++	if (device0 == nullptr) {
++		PX4_ERR("valid device required");
++		return PX4_ERROR;
++	}
++
++	ECoder *instance = new ECoder(device0, device1);
++
++	if (instance == nullptr) {
++		PX4_ERR("alloc failed");
++		return PX4_ERROR;
++	}
++
++	_object.store(instance);
++	_task_id = task_id_is_work_queue;
++	instance->start(_current_update_interval);
++	return PX4_OK;
++}
++
++void ECoder::start(uint32_t interval_us) {
++	if (reader0) {
++		reader0->ScheduleOnInterval(interval_us);
++	}
++	if (reader1) {
++		reader1->ScheduleOnInterval(interval_us);
++	}
++}
++
++
++int ECoder::custom_command(int argc, char *argv[])
++{
++	return 0;
++}
++
++int ECoder::print_status()
++{
++	PX4_INFO("Max update rate: %u Hz", 1000000 / _current_update_interval);
++
++	if (reader0) {
++		reader0->print_status();
++	}
++	if (reader1) {
++		reader1->print_status();
++	}
++	perf_print_counter(_publish_interval_perf);
++	return 0;
++}
++
++int
++ECoder::print_usage(const char *reason)
++{
++	if (reason) {
++		PX4_WARN("%s\n", reason);
++	}
++
++	PRINT_MODULE_DESCRIPTION(
++		R"DESCR_STR(
++### Descriptn
++Encoder
++)DESCR_STR");
++
++	PRINT_MODULE_USAGE_NAME("ecoder", "driver");
++	PRINT_MODULE_USAGE_COMMAND("start");
++	PRINT_MODULE_USAGE_PARAM_STRING('d', "/dev/ttyS1", "<file:dev>", "ECoder device 0", true);
++	PRINT_MODULE_USAGE_PARAM_STRING('D', "/dev/ttyS2", "<file:dev>", "ECoder device 1", true);
++	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
++
++	return 0;
++}
++
++extern "C" __EXPORT int ecoder_main(int argc, char *argv[])
++{
++	return ECoder::main(argc, argv);
++}
+diff --git a/src/drivers/encoder/ecoder20/ECoder.hpp b/src/drivers/encoder/ecoder20/ECoder.hpp
+new file mode 100644
+index 0000000000..8d28a44d82
+--- /dev/null
++++ b/src/drivers/encoder/ecoder20/ECoder.hpp
+@@ -0,0 +1,89 @@
++/****************************************************************************
++ *
++ *   Copyright (c) 2012-2019, 2021 PX4 Development Team. All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in
++ *    the documentation and/or other materials provided with the
++ *    distribution.
++ * 3. Neither the name PX4 nor the names of its contributors may be
++ *    used to endorse or promote products derived from this software
++ *    without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
++ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
++ * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ *
++ ****************************************************************************/
++
++#pragma once
++
++#include <float.h>
++
++#include <board_config.h>
++#include <drivers/drv_adc.h>
++#include <drivers/drv_hrt.h>
++#include <drivers/drv_rc_input.h>
++#include <lib/perf/perf_counter.h>
++#include <px4_platform_common/px4_config.h>
++#include <px4_platform_common/getopt.h>
++#include <px4_platform_common/log.h>
++#include <px4_platform_common/module.h>
++#include <px4_platform_common/module_params.h>
++#include <uORB/PublicationMulti.hpp>
++#include <uORB/Subscription.hpp>
++#include <uORB/SubscriptionInterval.hpp>
++#include <uORB/topics/parameter_update.h>
++#include "ECoderReader.h"
++
++
++class ECoder : public ModuleBase<ECoder>, public ModuleParams
++{
++public:
++
++	ECoder(const char *device0, const char * device1);
++	virtual ~ECoder();
++
++	/** @see ModuleBase */
++	static int task_spawn(int argc, char *argv[]);
++
++	/** @see ModuleBase */
++	static int custom_command(int argc, char *argv[]);
++
++	/** @see ModuleBase */
++	static int print_usage(const char *reason = nullptr);
++
++	/** @see ModuleBase::print_status() */
++	int print_status() override;
++
++	ECoderReader * reader0 = nullptr;
++	ECoderReader * reader1 = nullptr;
++	char		_device0[20] {};
++	char		_device1[20] {};
++	void start(uint32_t interval_us);
++
++private:
++	bool _report_lock{true};
++
++	static constexpr unsigned	_current_update_interval{500}; // 2KHz
++
++	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1000000};
++
++	perf_counter_t	_publish_interval_perf;
++	uint32_t	_bytes_rx{0};
++};
+diff --git a/src/drivers/encoder/ecoder20/ECoderReader.cpp b/src/drivers/encoder/ecoder20/ECoderReader.cpp
+new file mode 100644
+index 0000000000..a6b33b41f7
+--- /dev/null
++++ b/src/drivers/encoder/ecoder20/ECoderReader.cpp
+@@ -0,0 +1,219 @@
++#include "ECoderReader.h"
++#include <string.h>
++#include <fcntl.h>
++#include <termios.h>
++#include <px4_platform_common/log.h>
++#define ECODER_BITRATE 2500000
++
++static uint8_t commands[] {
++	0x02, //Read single turn position
++	0x8A, ///Read multi turn position
++	0x92, //Read precision
++	0x1A //Read single multi precision
++};
++
++uint8_t CRC_C(uint8_t *CRCbuf, uint8_t* CRC_8X1,uint8_t Length);
++const px4::wq_config_t getEncoderWqConfig(int reader_id) {
++	if (reader_id == 0) {
++		return px4::wq_configurations::motor_encoder0;
++	} else {
++		return px4::wq_configurations::motor_encoder1;
++	}
++}
++
++ECoderReader::ECoderReader(const char * module_name, int reader_id, const char *device):
++	ScheduledWorkItem(module_name, getEncoderWqConfig(reader_id)),
++	_reader_id(reader_id),
++	_cycle_perf(perf_alloc(PC_INTERVAL, module_name)),
++	_process_perf(perf_alloc(PC_ELAPSED, "Ecoder::ProcessData")) {
++	if (device) {
++		strncpy(_device, device, sizeof(_device) - 1);
++		_device[sizeof(_device) - 1] = '\0';
++	}
++	CRC_8X1_TAB_Creat(CRC8X1);
++}
++
++ECoderReader::~ECoderReader() {
++	close(_rcs_fd);
++	perf_free(_cycle_perf);
++	perf_free(_process_perf);
++}
++
++int ECoderReader::init() {
++	PX4_INFO("Try to open %s", _device);
++	_rcs_fd = open(_device, O_RDWR | O_NOCTTY | O_NONBLOCK);
++	struct termios t;
++	tcgetattr(_rcs_fd, &t);
++	t.c_cflag &= ~(CSIZE | PARENB | CSTOPB | CRTSCTS);
++	t.c_cflag |= (CS8);
++	cfsetspeed(&t, ECODER_BITRATE);
++	tcsetattr(_rcs_fd, TCSANOW, &t);
++
++	int termios_state = tcsetattr(_rcs_fd, TCSANOW, &t);
++	if (termios_state < 0) {
++		PX4_ERR("ECoder %d open device %s for ecoder with 2.5Mbps failed", _reader_id, _device);
++		return PX4_ERROR;
++	} else {
++		_initialized = true;
++		PX4_INFO("ECoder %d succ opened device %s for ecoder with 2.5Mbps", _reader_id, _device);
++		return PX4_OK;
++	}
++}
++
++void ECoderReader::ask() {
++	::write(_rcs_fd, &commands[3], 1);
++	last_ask_time = hrt_absolute_time();
++}
++
++int ECoderReader::process_data() {
++	perf_begin(_process_perf);
++	uint8_t crc = CRC_C(dataBuf, CRC8X1, ECODER_RES_FRAME_LEN);
++	if (crc != 0) {
++		return PX4_ERROR;
++	}
++	int32_t single_Turn = dataBuf[2] | dataBuf[3] << 8
++		| dataBuf[4] << 16;
++	float resolution = (float) (1<<dataBuf[5]);
++	real_time_angle = (float)single_Turn/resolution*M_TWOPI_F;
++	int32_t multi_Turn =   dataBuf[6] | dataBuf[7] << 8
++		| dataBuf[8] << 16;
++	float rpm = 0;
++	bool rpm_updated = false;
++	if (multi_Turn != last_multi_turn) {
++		float dt = ((float)(last_ask_time - last_multi_turn_time))/1000000.0f;
++		int turns = multi_Turn - last_multi_turn;
++		if (abs(turns) < 5) {
++			//Else is cross zero..
++			rpm = ((float)turns)*60/dt;
++			rpm_updated = true;
++		}
++		last_multi_turn_time = last_ask_time;
++		last_multi_turn = multi_Turn;
++	}
++
++	if (rpm_updated) {
++		real_time_rpm = rpm;
++	}
++	data.timestamp = last_ask_time;//
++	data.motor_id = _reader_id;
++	data.motor_rpm = real_time_rpm;
++	data.motor_abs_angle = real_time_angle;
++	// data.multi_turns = last_multi_turn;
++	_encoder_pub.publish(data);
++	uint64_t time = hrt_absolute_time();
++	num_msgs++;
++	real_time_freq = (float)num_msgs/(float)(time - first_read_time)*1000000.0f;
++	if (first_read_time == 0)
++		first_read_time = time;
++	perf_end(_process_perf);
++	return PX4_OK;
++}
++
++
++int ECoderReader::read_once() {
++	// const hrt_abstime cycle_timestamp = hrt_absolute_time();
++	int newBytes = 0;
++	newBytes = ::read(_rcs_fd, &_serial_buf[0], ECODER_BUFFER_SIZE);
++	if (newBytes <= 0) {
++		return PX4_ERROR;
++	}
++	_bytes_rx += newBytes;
++	// PX4_INFO_RAW("New bytes %d: ", newBytes);
++	// for (int i = 0; i<newBytes; i ++) {
++	// 	PX4_INFO_RAW("%d:%x ", i, _serial_buf[i]);
++	// }
++	// PX4_INFO_RAW("\n");
++	for (int i = 0; i<newBytes; i ++) {
++		if (data_buf_index < 0) {
++			if (_serial_buf[i] == commands[3]) {
++				data_buf_index = 0;
++				dataBuf[data_buf_index++] = _serial_buf[i];
++				//Then we need to check the next byte is 0x00
++				continue;
++			}
++			continue;
++		} else if (data_buf_index == 0) {
++			//Ensure 0 right after returned command
++			if (_serial_buf[i] != 0) {
++				data_buf_index = -1;
++			} else {
++				dataBuf[data_buf_index++] = _serial_buf[i];
++			}
++			continue;
++		} else if (data_buf_index > 0) {
++			dataBuf[data_buf_index++] = _serial_buf[i];
++			if (data_buf_index == ECODER_RES_FRAME_LEN) {
++				process_data();
++				data_buf_index = -1;
++			}
++		}
++	}
++	return PX4_OK;
++}
++
++
++void ECoderReader::Run()
++{
++	// if (should_exit()) {
++	// 	exit_and_cleanup();
++	// 	return;
++	// }
++	if (!_initialized) {
++		if (init() == PX4_OK) {
++			_initialized = true;
++		}
++	} else {
++		perf_begin(_cycle_perf);
++		ask();
++		int32_t succ = read_once();
++		if (succ == PX4_OK) {
++			ecoder_ok = 1;
++		}
++		perf_end(_cycle_perf);
++	}
++}
++
++void ECoderReader::print_status() {
++	PX4_INFO("ECODER:%d UART device: %s", _reader_id, _device);
++	PX4_INFO("UART RX bytes: %d freq %.1f", _bytes_rx, (double)real_time_freq);
++	PX4_INFO("ECoder %d: valid %d angle %4.1fdeg turns %d rpm %4.1f", _reader_id,
++		ecoder_ok, (double) (real_time_angle*M_RAD_TO_DEG_F), last_multi_turn, (double)real_time_rpm);
++	perf_print_counter(_cycle_perf);
++	perf_print_counter(_process_perf);
++}
++
++uint8_t CRC_C(uint8_t *CRCbuf, uint8_t* CRC_8X1,uint8_t Length)
++{
++	uint8_t CRCResult=0;
++	uint8_t CRCLength=0;
++	while(CRCLength<Length)
++	{
++		CRCResult ^= CRCbuf[CRCLength];
++		CRCResult = (CRCResult&0x00ff);
++		CRCLength++;
++		CRCResult = CRC_8X1[CRCResult];
++	}
++	return CRCResult;
++}
++
++void ECoderReader::CRC_8X1_TAB_Creat(uint8_t *CRC_8X1)
++{
++	uint16_t i,j;
++	uint8_t CRCResult;
++	for(j = 0;j < 256;j++)
++	{
++		CRCResult = j;
++		for(i = 0;i < 8;i++)
++		{
++			if(CRCResult & 0x80)
++		{
++			CRCResult = (CRCResult << 1) ^ 0x01; //0x01--x^8+1
++		}
++		else
++		{
++			CRCResult <<= 1;
++		}
++		}
++		CRC_8X1[j] = (CRCResult&0x00ff);
++	}
++}
+diff --git a/src/drivers/encoder/ecoder20/ECoderReader.h b/src/drivers/encoder/ecoder20/ECoderReader.h
+new file mode 100644
+index 0000000000..f7f84caba1
+--- /dev/null
++++ b/src/drivers/encoder/ecoder20/ECoderReader.h
+@@ -0,0 +1,53 @@
++
++#pragma once
++
++#include <float.h>
++#include <stdint.h>
++#include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
++#include <uORB/topics/sensor_motor_encoder.h>
++#include <uORB/Publication.hpp>
++
++#define ECODER_BUFFER_SIZE 64
++#define ECODER_WRITE_SIZE 16
++#define CRC_TAB_SIZE 256
++#define ECODER_RES_FRAME_LEN 11
++
++class ECoderReader : public px4::ScheduledWorkItem {
++	int		_rcs_fd{-1};
++	char		_device[20] {};
++	uint8_t _serial_buf[ECODER_BUFFER_SIZE] {};
++	uint8_t _serial_write_buf[ECODER_WRITE_SIZE] {};
++	int _reader_id;
++	uint8_t CRC8X1[CRC_TAB_SIZE];
++	void Run() override;
++	perf_counter_t	_cycle_perf{0};
++	perf_counter_t	_process_perf{0};
++	bool _initialized{false};
++	uORB::Publication<sensor_motor_encoder_s>	_encoder_pub{ORB_ID(sensor_motor_encoder)};			/**< rate setpoint publication */
++	uint64_t last_ask_time{0};
++	uint64_t first_read_time{0};
++	int32_t num_msgs{0};
++	float real_time_freq {0};
++	int32_t last_multi_turn{0};
++	uint64_t last_multi_turn_time{0};
++
++	uint8_t ecoder_ok {0};
++	float real_time_angle {0};
++	float real_time_rpm {0};
++	uint32_t _bytes_rx {0};
++	sensor_motor_encoder_s data;
++	uint8_t dataBuf[16] {0};
++	int8_t data_buf_index = -1;
++
++
++	int read_once();
++	void ask();
++	int process_data();
++public:
++	int init();
++	ECoderReader(const char * module_name, int reader_id, const char *device);
++	virtual ~ECoderReader();
++	void print_status();
++	static void CRC_8X1_TAB_Creat(uint8_t *CRC_8X1);
++};
++
+diff --git a/src/drivers/encoder/ecoder20/module.yaml b/src/drivers/encoder/ecoder20/module.yaml
+new file mode 100644
+index 0000000000..773802a7b6
+--- /dev/null
++++ b/src/drivers/encoder/ecoder20/module.yaml
+@@ -0,0 +1,2 @@
++module_name: ECoder Input Driver
++
+diff --git a/src/drivers/rc_input/RCInput.cpp b/src/drivers/rc_input/RCInput.cpp
+index 5ed5066cd4..faa72084db 100644
+--- a/src/drivers/rc_input/RCInput.cpp
++++ b/src/drivers/rc_input/RCInput.cpp
+@@ -641,7 +641,7 @@ void RCInput::Run()
+ 
+ 			} else {
+ 				// Scan the next protocol
+-				set_rc_scan_state(RC_SCAN_GHST);
++				set_rc_scan_state(RC_SCAN_SBUS); //Jump the useless GHST
+ 			}
+ 
+ 			break;
+diff --git a/src/modules/mavlink/mavlink_main.cpp b/src/modules/mavlink/mavlink_main.cpp
+index c06c3d0633..c819107c74 100644
+--- a/src/modules/mavlink/mavlink_main.cpp
++++ b/src/modules/mavlink/mavlink_main.cpp
+@@ -1628,7 +1628,7 @@ Mavlink::configure_streams_to_default(const char *configure_single_stream)
+ 		break;
+ 
+ 	case MAVLINK_MODE_EXTVISION:
+-		configure_stream_local("HIGHRES_IMU", unlimited_rate);		// for VIO
++		configure_stream_local("HIGHRES_IMU", 400.0f);		// for VIO
+ 
+ 	// FALLTHROUGH
+ 	case MAVLINK_MODE_EXTVISIONMIN:
+@@ -2210,6 +2210,11 @@ Mavlink::task_main(int argc, char *argv[])
+ 		_main_loop_delay = MAVLINK_MAX_INTERVAL;
+ 	}
+ 
++	if (_mode == MAVLINK_MODE_EXTVISION) {
++		/* set main loop delay to 1 second for the IRIDIUM mode */
++		_main_loop_delay = 200;
++	}
++
+ 	/* open the UART device after setting the instance, as it might block */
+ 	if (get_protocol() == Protocol::SERIAL) {
+ 		_uart_fd = mavlink_open_uart(_baudrate, _device_name, _flow_control);
+diff --git a/src/modules/mavlink/streams/HIGHRES_IMU.hpp b/src/modules/mavlink/streams/HIGHRES_IMU.hpp
+index 5bba947225..b7f6307f77 100644
+--- a/src/modules/mavlink/streams/HIGHRES_IMU.hpp
++++ b/src/modules/mavlink/streams/HIGHRES_IMU.hpp
+@@ -41,6 +41,8 @@
+ #include <uORB/topics/vehicle_air_data.h>
+ #include <uORB/topics/vehicle_imu.h>
+ #include <uORB/topics/vehicle_magnetometer.h>
++#include <uORB/topics/vehicle_acceleration.h>
++#include <uORB/topics/vehicle_angular_velocity.h>
+ 
+ using matrix::Vector3f;
+ 
+@@ -63,137 +65,91 @@ public:
+ private:
+ 	explicit MavlinkStreamHighresIMU(Mavlink *mavlink) : MavlinkStream(mavlink) {}
+ 
+-	uORB::SubscriptionMultiArray<vehicle_imu_s, 3> _vehicle_imu_subs{ORB_ID::vehicle_imu};
+-	uORB::Subscription _estimator_sensor_bias_sub{ORB_ID(estimator_sensor_bias)};
+-	uORB::Subscription _estimator_selector_status_sub{ORB_ID(estimator_selector_status)};
++	// uORB::SubscriptionMultiArray<vehicle_imu_s, 3> _vehicle_imu_subs{ORB_ID::vehicle_imu};
++	// uORB::Subscription _estimator_sensor_bias_sub{ORB_ID(estimator_sensor_bias)};
++	// uORB::Subscription _estimator_selector_status_sub{ORB_ID(estimator_selector_status)};
+ 	uORB::Subscription _sensor_selection_sub{ORB_ID(sensor_selection)};
+ 	uORB::Subscription _differential_pressure_sub{ORB_ID(differential_pressure)};
+ 	uORB::Subscription _magnetometer_sub{ORB_ID(vehicle_magnetometer)};
+ 	uORB::Subscription _air_data_sub{ORB_ID(vehicle_air_data)};
++	uORB::Subscription _angular_velocity_sub{ORB_ID(vehicle_angular_velocity)};
++	uORB::Subscription _acceleration_sub{ORB_ID(vehicle_acceleration)};
++
++	bool updated_ang_vel = false;
++	bool updated_acc = false;
++	vehicle_acceleration_s ang_vel;
++	vehicle_angular_velocity_s acc;
+ 
+ 	bool send() override
+ 	{
+-		bool updated = false;
+-
+-		sensor_selection_s sensor_selection{};
+-		_sensor_selection_sub.copy(&sensor_selection);
+-
+-		vehicle_imu_s imu;
+-
+-		for (auto &imu_sub : _vehicle_imu_subs) {
+-			if (imu_sub.update(&imu)) {
+-				if (imu.accel_device_id == sensor_selection.accel_device_id) {
+-					updated = true;
+-					break;
+-				}
+-			}
++		if (_angular_velocity_sub.update(&ang_vel)) {
++			updated_ang_vel = true;
+ 		}
+-
+-		if (updated) {
++		if (_acceleration_sub.update(&acc)) {
++			updated_acc = true;
++		}
++		if (updated_ang_vel || updated_acc) {
++			updated_ang_vel = false;
++			updated_acc = false;
+ 			uint16_t fields_updated = 0;
+ 
+ 			fields_updated |= (1 << 0) | (1 << 1) | (1 << 2); // accel
+ 			fields_updated |= (1 << 3) | (1 << 4) | (1 << 5); // gyro
+ 
+-			vehicle_magnetometer_s magnetometer{};
+-
+-			if (_magnetometer_sub.update(&magnetometer)) {
+-				// mark third group dimensions as changed
+-				fields_updated |= (1 << 6) | (1 << 7) | (1 << 8);
+-
+-			} else {
+-				_magnetometer_sub.copy(&magnetometer);
+-			}
+-
+-			// find corresponding estimated sensor bias
+-			if (_estimator_selector_status_sub.updated()) {
+-				estimator_selector_status_s estimator_selector_status;
+-
+-				if (_estimator_selector_status_sub.copy(&estimator_selector_status)) {
+-					_estimator_sensor_bias_sub.ChangeInstance(estimator_selector_status.primary_instance);
+-				}
+-			}
+-
+-			Vector3f accel_bias{0.f, 0.f, 0.f};
+-			Vector3f gyro_bias{0.f, 0.f, 0.f};
+-			Vector3f mag_bias{0.f, 0.f, 0.f};
+-
+-			{
+-				estimator_sensor_bias_s bias;
+-
+-				if (_estimator_sensor_bias_sub.copy(&bias)) {
+-					if ((bias.accel_device_id != 0) && (bias.accel_device_id == imu.accel_device_id)) {
+-						accel_bias = Vector3f{bias.accel_bias};
+-					}
+-
+-					if ((bias.gyro_device_id != 0) && (bias.gyro_device_id == imu.gyro_device_id)) {
+-						gyro_bias = Vector3f{bias.gyro_bias};
+-					}
+-
+-					if ((bias.mag_device_id != 0) && (bias.mag_device_id == magnetometer.device_id)) {
+-						mag_bias = Vector3f{bias.mag_bias};
++			// vehicle_magnetometer_s magnetometer{};
+ 
+-					} else {
+-						// find primary mag
+-						uORB::SubscriptionMultiArray<vehicle_magnetometer_s> mag_subs{ORB_ID::vehicle_magnetometer};
++			// if (_magnetometer_sub.update(&magnetometer)) {
++			// 	// mark third group dimensions as changed
++			// 	fields_updated |= (1 << 6) | (1 << 7) | (1 << 8);
+ 
+-						for (int i = 0; i < mag_subs.size(); i++) {
+-							if (mag_subs[i].advertised() && mag_subs[i].copy(&magnetometer)) {
+-								if (magnetometer.device_id == bias.mag_device_id) {
+-									_magnetometer_sub.ChangeInstance(i);
+-									break;
+-								}
+-							}
++			// } else {
++			// 	_magnetometer_sub.copy(&magnetometer);
++			// }
+ 
+-						}
+-					}
+-				}
+-			}
++			// Vector3f mag_bias{0.f, 0.f, 0.f};
+ 
+-			const Vector3f mag = Vector3f{magnetometer.magnetometer_ga} - mag_bias;
++			// const Vector3f mag = Vector3f{magnetometer.magnetometer_ga} - mag_bias;
+ 
+-			vehicle_air_data_s air_data{};
++			// vehicle_air_data_s air_data{};
+ 
+-			if (_air_data_sub.update(&air_data)) {
+-				/* mark fourth group (baro fields) dimensions as changed */
+-				fields_updated |= (1 << 9) | (1 << 11) | (1 << 12);
++			// if (_air_data_sub.update(&air_data)) {
++			// 	/* mark fourth group (baro fields) dimensions as changed */
++			// 	fields_updated |= (1 << 9) | (1 << 11) | (1 << 12);
+ 
+-			} else {
+-				_air_data_sub.copy(&air_data);
+-			}
++			// } else {
++			// 	_air_data_sub.copy(&air_data);
++			// }
+ 
+-			differential_pressure_s differential_pressure{};
++			// differential_pressure_s differential_pressure{};
+ 
+-			if (_differential_pressure_sub.update(&differential_pressure)) {
+-				/* mark fourth group (dpres field) dimensions as changed */
+-				fields_updated |= (1 << 10);
++			// if (_differential_pressure_sub.update(&differential_pressure)) {
++			// 	/* mark fourth group (dpres field) dimensions as changed */
++			// 	fields_updated |= (1 << 10);
+ 
+-			} else {
+-				_differential_pressure_sub.copy(&differential_pressure);
+-			}
++			// } else {
++			// 	_differential_pressure_sub.copy(&differential_pressure);
++			// }
+ 
+-			const float accel_dt_inv = 1.e6f / (float)imu.delta_velocity_dt;
+-			const Vector3f accel = (Vector3f{imu.delta_velocity} * accel_dt_inv) - accel_bias;
++			const Vector3f accel{acc.xyz};
+ 
+-			const float gyro_dt_inv = 1.e6f / (float)imu.delta_angle_dt;
+-			const Vector3f gyro = (Vector3f{imu.delta_angle} * gyro_dt_inv) - gyro_bias;
++			const Vector3f gyro{ang_vel.xyz};
+ 
+ 			mavlink_highres_imu_t msg{};
+ 
+-			msg.time_usec = imu.timestamp_sample;
++			msg.time_usec = ang_vel.timestamp_sample;
+ 			msg.xacc = accel(0);
+ 			msg.yacc = accel(1);
+ 			msg.zacc = accel(2);
+ 			msg.xgyro = gyro(0);
+ 			msg.ygyro = gyro(1);
+ 			msg.zgyro = gyro(2);
+-			msg.xmag = mag(0);
+-			msg.ymag = mag(1);
+-			msg.zmag = mag(2);
+-			msg.abs_pressure = air_data.baro_pressure_pa;
+-			msg.diff_pressure = differential_pressure.differential_pressure_raw_pa;
+-			msg.pressure_alt = air_data.baro_alt_meter;
+-			msg.temperature = air_data.baro_temp_celcius;
++			// msg.xmag = mag(0);
++			// msg.ymag = mag(1);
++			// msg.zmag = mag(2);
++			// msg.abs_pressure = air_data.baro_pressure_pa;
++			// msg.diff_pressure = differential_pressure.differential_pressure_raw_pa;
++			// msg.pressure_alt = air_data.baro_alt_meter;
++			// msg.temperature = air_data.baro_temp_celcius;
+ 			msg.fields_updated = fields_updated;
+ 
+ 			mavlink_msg_highres_imu_send_struct(_mavlink->get_channel(), &msg);
+diff --git a/src/modules/sensors/vehicle_acceleration/VehicleAcceleration.cpp b/src/modules/sensors/vehicle_acceleration/VehicleAcceleration.cpp
+index 02c6c0db79..4789939a83 100644
+--- a/src/modules/sensors/vehicle_acceleration/VehicleAcceleration.cpp
++++ b/src/modules/sensors/vehicle_acceleration/VehicleAcceleration.cpp
+@@ -100,15 +100,16 @@ void VehicleAcceleration::CheckAndUpdateFilters()
+ 				sample_rate_changed = true;
+ 
+ 				// determine number of sensor samples that will get closest to the desired rate
+-				if (_param_imu_integ_rate.get() > 0) {
+-					const float configured_interval_us = 1e6f / _param_imu_integ_rate.get();
+-					const float sample_interval_avg = 1e6f / sample_rate_hz;
+-					const uint8_t samples = math::constrain(roundf(configured_interval_us / sample_interval_avg), 1.f,
+-										(float)sensor_accel_s::ORB_QUEUE_LENGTH);
++				// if (_param_imu_integ_rate.get() > 0) {
++				// 	const float configured_interval_us = 1e6f / _param_imu_integ_rate.get();
++				// 	const float sample_interval_avg = 1e6f / sample_rate_hz;
++				// 	const uint8_t samples = math::constrain(roundf(configured_interval_us / sample_interval_avg), 1.f,
++				// 						(float)sensor_accel_s::ORB_QUEUE_LENGTH);
+ 
+-					_sensor_sub.set_required_updates(samples);
++				// 	_sensor_sub.set_required_updates(samples);
+ 
+-				} else {
++				// } else
++				{
+ 					_sensor_sub.set_required_updates(1);
+ 				}
+ 
+diff --git a/src/modules/swashplateless_mixer/CMakeLists.txt b/src/modules/swashplateless_mixer/CMakeLists.txt
+new file mode 100644
+index 0000000000..8522c0cac9
+--- /dev/null
++++ b/src/modules/swashplateless_mixer/CMakeLists.txt
+@@ -0,0 +1,46 @@
++############################################################################
++#
++#   Copyright (c) 2015-2019 PX4 Development Team. All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++#
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in
++#    the documentation and/or other materials provided with the
++#    distribution.
++# 3. Neither the name PX4 nor the names of its contributors may be
++#    used to endorse or promote products derived from this software
++#    without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
++# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
++# OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++# AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
++# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++# POSSIBILITY OF SUCH DAMAGE.
++#
++############################################################################
++
++
++px4_add_module(
++	MODULE modules__swashplateless_mixer
++	MAIN swashplateless_mixer
++	COMPILE_FLAGS
++		${MAX_CUSTOM_OPT_LEVEL}
++	SRCS
++		swashplateless_main.cpp
++		SLMixer.cpp
++	DEPENDS
++		mathlib
++		px4_work_queue
++	)
+diff --git a/src/modules/swashplateless_mixer/SLMixer.cpp b/src/modules/swashplateless_mixer/SLMixer.cpp
+new file mode 100644
+index 0000000000..f1b1b1fc76
+--- /dev/null
++++ b/src/modules/swashplateless_mixer/SLMixer.cpp
+@@ -0,0 +1,61 @@
++#include "SLMixer.hpp"
++#include <mathlib/mathlib.h>
++
++SLMixer::SLMixer() {
++
++}
++
++SLMixer::~SLMixer() {
++
++}
++
++float SLMixer::mix(float calibed_angle, float rpm, const Vector3f & thrust, const Vector3f & torque) {
++//Mixer of swashplateless
++	target_thrust = thrust;
++	target_torque = torque;
++	motor_angle = calibed_angle;
++	float thrust_z = math::max(thrust(2), 0.05f);
++	n_x = -torque(1)*_amp_torque/_prop_pos + thrust(0)*_amp_force/thrust_z;
++	n_y = torque(0)*_amp_torque/_prop_pos + thrust(1)*_amp_force/thrust_z;
++	cyclic_pharse = atan2f(n_x, n_y);
++	cyclic_amp = sqrtf(n_x*n_x + n_y*n_y);
++	output = _amp * cyclic_amp * sinf(calibed_angle -_phrase_offset - _dir*cyclic_pharse) + thrust(2) - torque(2)*_dir;
++	output = math::max(output, 0.0f);
++	return output;
++}
++
++
++void SLMixer::set_direction(int direction) {
++	_dir =(float) direction;
++}
++
++void SLMixer::set_amp(float amp) {
++	_amp = amp;
++}
++
++void SLMixer::set_phrase_offset(float phrase_offset) {
++	_phrase_offset = phrase_offset;
++}
++
++void SLMixer::set_amp_force(float amp_force) {
++	_amp_force = amp_force;
++}
++
++void SLMixer::set_prop_pos(float prop_pos) {
++	_prop_pos = prop_pos;
++}
++
++void SLMixer::set_amp_torque(float amp_torque) {
++	_amp_torque = amp_torque;
++}
++
++void SLMixer::print_status() {
++	//print target force and torque
++	printf("SLMixer: target_thrust: %f %f %f\n", (double) target_thrust(0), (double) target_thrust(1),
++		(double) target_thrust(2));
++	printf("SLMixer: target_torque: %f %f %f\n", (double) target_torque(0), (double) target_torque(1),
++		(double) target_torque(2));
++	PX4_INFO("SLMixer: motor_angle :%.1fdeg n_x: %.3f, n_y: %.3f, cyclic_pharse: %.2fdeg, cyclic_amp: %.3f, output: %.3f",
++		(double) motor_angle*M_RAD_TO_DEG, (double) n_x, (double) n_y, (double) cyclic_pharse*M_RAD_TO_DEG, (double) cyclic_amp,
++		(double) output);
++}
+diff --git a/src/modules/swashplateless_mixer/SLMixer.hpp b/src/modules/swashplateless_mixer/SLMixer.hpp
+new file mode 100644
+index 0000000000..180802b91e
+--- /dev/null
++++ b/src/modules/swashplateless_mixer/SLMixer.hpp
+@@ -0,0 +1,34 @@
++#pragma once
++
++#include <matrix/matrix/math.hpp>
++#include <matrix/matrix/Matrix.hpp>
++
++using matrix::Vector3f;
++class SLMixer {
++	float _dir = 1; //1 clockwise, -1 counterclockwise
++	float _amp = 0.2; //amplitude of the sin wave
++	float _phrase_offset = 0; //phrase offset with accuacy calib
++	float _prop_pos = 0.06; //+1 above fc, -1 below fc. bigger the output response to torque smaller.
++	float _amp_force = 1.0f;//amplitude of the TPP response to side forces
++	float _amp_torque = 1.0f;//amplitude of the TPP response to torque
++
++	float n_x{0};
++	float n_y{0};
++	float cyclic_pharse{0};
++	float cyclic_amp{0};
++	float output{0};
++	Vector3f target_thrust;
++	Vector3f target_torque;
++	float motor_angle{0};
++public:
++	SLMixer();
++	~SLMixer();
++	float mix(float calibed_angle, float rpm, const Vector3f & thrust, const Vector3f &torque);
++	void set_direction(int direction);
++	void set_amp(float amp);
++	void set_amp_force(float amp_force);
++	void set_prop_pos(float prop_pos);
++	void set_phrase_offset(float phrase_offset);
++	void set_amp_torque(float amp_torque);
++	void print_status();
++};
+diff --git a/src/modules/swashplateless_mixer/swashplateless.hpp b/src/modules/swashplateless_mixer/swashplateless.hpp
+new file mode 100644
+index 0000000000..97e7f71f3a
+--- /dev/null
++++ b/src/modules/swashplateless_mixer/swashplateless.hpp
+@@ -0,0 +1,99 @@
++#pragma once
++
++#include <lib/mixer/MixerBase/Mixer.hpp> // Airmode
++#include <matrix/matrix/math.hpp>
++#include <perf/perf_counter.h>
++#include <px4_platform_common/px4_config.h>
++#include <px4_platform_common/defines.h>
++#include <px4_platform_common/module.h>
++#include <px4_platform_common/module_params.h>
++#include <px4_platform_common/posix.h>
++#include <px4_platform_common/px4_work_queue/WorkItem.hpp>
++#include <uORB/Publication.hpp>
++#include <uORB/Subscription.hpp>
++#include <uORB/SubscriptionCallback.hpp>
++#include <uORB/topics/manual_control_setpoint.h>
++#include <uORB/topics/parameter_update.h>
++#include <uORB/topics/sensor_motor_encoder.h>
++#include <uORB/topics/actuator_controls.h>
++#include "SLMixer.hpp"
++
++#define MAX_SL_MOTOR_NUM 2
++using namespace time_literals;
++
++/**
++ * SwashplatelessMixer app start / stop handling function
++ */
++extern "C" __EXPORT int swashplateless_mixer_main(int argc, char *argv[]);
++
++class SwashplatelessMixer : public ModuleBase<SwashplatelessMixer>, public ModuleParams,
++	public px4::WorkItem
++{
++public:
++	SwashplatelessMixer();
++	~SwashplatelessMixer() override;
++
++	/** @see ModuleBase */
++	static int task_spawn(int argc, char *argv[]);
++
++	/** @see ModuleBase */
++	static int custom_command(int argc, char *argv[]);
++
++	/** @see ModuleBase */
++	static int print_usage(const char *reason = nullptr);
++
++	/** @see ModuleBase::print_status() */
++	int print_status() override;
++
++	bool init();
++	SLMixer * sl_mixer[MAX_SL_MOTOR_NUM] = {nullptr};
++	float calibration_offset[MAX_SL_MOTOR_NUM] = {0};
++
++private:
++	void Run() override;
++
++	/**
++	 * initialize some vectors/matrices from parameters
++	 */
++	void		parameters_updated();
++
++	uORB::Subscription _manual_control_setpoint_sub{ORB_ID(manual_control_setpoint)};	/**< manual control setpoint subscription */
++	uORB::Subscription _actuators_sub{ORB_ID(actuator_controls_0)};	/**< actuator controls subscription */
++	uORB::SubscriptionCallbackWorkItem  _sensor_motor_encoder_sub{this, ORB_ID(sensor_motor_encoder)};	/**< manual control setpoint subscription */
++	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
++
++	uORB::Publication<actuator_controls_s>		_actuators_pub{ORB_ID(actuator_controls_5)}; //Publish to group 2, and pass mixer run on group 5
++
++	actuator_controls_s v_actuator_controls{};
++	actuator_controls_s v_actuator_controls_output{};
++	manual_control_setpoint_s _manual_control_setpoint{};
++	uint64_t first_mix_time {0};
++	int64_t mix_count {0};
++	float mix_freq {0};
++
++	perf_counter_t	_loop_perf;			/**< loop duration performance counter */
++	enum DebugMode {
++		DEBUG_DISABLE = 0,
++		DEBUG_PASSTHROUGH_RC = 1,
++		DEBUG_ROLL_TORQUE = 2,
++		DEBUG_PITCH_TORQUE = 3,
++		DEBUG_THRUST_ONLY = 4
++	} _debug_mode;
++
++
++	DEFINE_PARAMETERS(
++		(ParamFloat<px4::params::SL_GAIN>) _param_sl_gain,
++		(ParamFloat<px4::params::SL_CALIB_0>) _param_calib_0,
++		(ParamFloat<px4::params::SL_CALIB_1>) _param_calib_1,
++		(ParamFloat<px4::params::SL_PHASE_OFF_0>) _param_phase_offset_0,
++		(ParamFloat<px4::params::SL_PHASE_OFF_1>) _param_phase_offset_1,
++		(ParamInt<px4::params::SL_DIR_0>) _param_dir_0,
++		(ParamInt<px4::params::SL_DIR_1>) _param_dir_1,
++		(ParamFloat<px4::params::SL_GAIN_FORCE>) _param_gain_force,
++		(ParamFloat<px4::params::SL_GAIN_TORQUE>) _param_gain_torque,
++		(ParamFloat<px4::params::SL_PROP_POS_0>) _param_prop_pos_0,
++		(ParamFloat<px4::params::SL_PROP_POS_1>) _param_prop_pos_1,
++		(ParamInt<px4::params::SL_DEBUG_MOD>) _param_debug_mode
++	)
++};
++
+diff --git a/src/modules/swashplateless_mixer/swashplateless_main.cpp b/src/modules/swashplateless_mixer/swashplateless_main.cpp
+new file mode 100644
+index 0000000000..c1afa29748
+--- /dev/null
++++ b/src/modules/swashplateless_mixer/swashplateless_main.cpp
+@@ -0,0 +1,195 @@
++#include "swashplateless.hpp"
++
++#include <mathlib/math/Limits.hpp>
++#include <mathlib/math/Functions.hpp>
++
++using namespace matrix;
++
++SwashplatelessMixer::SwashplatelessMixer() :
++	ModuleParams(nullptr),
++	WorkItem(MODULE_NAME, px4::wq_configurations::sl_mixer),
++	_loop_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": cycle"))
++{
++	for (int i = 0; i < MAX_SL_MOTOR_NUM; i++) {
++		sl_mixer[i] = new SLMixer();
++	}
++	parameters_updated();
++}
++
++SwashplatelessMixer::~SwashplatelessMixer()
++{
++	for (int i = 0; i < MAX_SL_MOTOR_NUM; i++) {
++		delete sl_mixer[i];
++	}
++	perf_free(_loop_perf);
++}
++
++bool
++SwashplatelessMixer::init()
++{
++	if (!_sensor_motor_encoder_sub.registerCallback()) {
++		PX4_ERR("sensor_motor_encoder callback registration failed!");
++		return false;
++	}
++	for (int i = 0; i < 8; i++) {
++		v_actuator_controls_output.control[i] = 0;
++	}
++	return true;
++}
++
++void
++SwashplatelessMixer::parameters_updated()
++{
++	float amp = _param_sl_gain.get();
++	for (int i = 0; i < MAX_SL_MOTOR_NUM; i++) {
++		sl_mixer[i]->set_amp(amp);
++		sl_mixer[i]->set_amp_force(_param_gain_force.get());
++		sl_mixer[i]->set_amp_torque(_param_gain_torque.get());
++	}
++	calibration_offset[0] = _param_calib_0.get()*M_DEG_TO_RAD_F;
++	calibration_offset[1] = _param_calib_1.get()*M_DEG_TO_RAD_F;
++	sl_mixer[0]->set_direction(_param_dir_0.get());
++	sl_mixer[1]->set_direction(_param_dir_1.get());
++	sl_mixer[0]->set_phrase_offset(_param_phase_offset_0.get());
++	sl_mixer[1]->set_phrase_offset(_param_phase_offset_1.get());
++	sl_mixer[0]->set_prop_pos(_param_prop_pos_0.get());
++	sl_mixer[1]->set_prop_pos(_param_prop_pos_1.get());
++	_debug_mode = (DebugMode) _param_debug_mode.get();
++}
++
++void SwashplatelessMixer::Run()
++{
++	if (should_exit()) {
++		_sensor_motor_encoder_sub.unregisterCallback();
++		exit_and_cleanup();
++		return;
++	}
++
++	perf_begin(_loop_perf);
++
++	// Check if parameters have changed
++	if (_parameter_update_sub.updated()) {
++		// clear update
++		parameter_update_s param_update;
++		_parameter_update_sub.copy(&param_update);
++
++		updateParams();
++		parameters_updated();
++	}
++
++	sensor_motor_encoder_s v_motor_enc;
++	if (_sensor_motor_encoder_sub.update(&v_motor_enc)) {
++		uint64_t ts = hrt_absolute_time();
++		if (first_mix_time == 0) {
++			first_mix_time = ts;
++		} else {
++			mix_freq = (float)mix_count/(float)(ts - first_mix_time)*1000000.0f;
++		}
++
++		uint8_t motor_id = v_motor_enc.motor_id;
++		float calibed_angle = v_motor_enc.motor_abs_angle - calibration_offset[motor_id];
++		if (_actuators_sub.updated()) {
++			_actuators_sub.copy(&v_actuator_controls);
++		}
++		if (_manual_control_setpoint_sub.updated()) {
++			_manual_control_setpoint_sub.copy(&_manual_control_setpoint);
++		}
++		Vector3f thrust{0, 0, v_actuator_controls.control[3]};
++		Vector3f torque{v_actuator_controls.control[0], v_actuator_controls.control[1], v_actuator_controls.control[2]};
++		if (_debug_mode > DEBUG_DISABLE) {
++			if (_debug_mode == DEBUG_PASSTHROUGH_RC) {
++				thrust(2) = math::constrain(_manual_control_setpoint.z, 0.0f, 1.0f);
++				torque(0) = math::constrain(_manual_control_setpoint.x, -1.0f, 1.0f);
++				torque(1) = math::constrain(_manual_control_setpoint.y, -1.0f, 1.0f);
++				torque(2) = math::constrain(_manual_control_setpoint.r, -1.0f, 1.0f);
++			} else if (_debug_mode == DEBUG_ROLL_TORQUE) {
++				torque(0) = 1.0;
++				torque(1) = 0.0;
++				torque(2) = 0.0;
++			} if (_debug_mode == DEBUG_PITCH_TORQUE) {
++				torque(0) = 0.0;
++				torque(1) = 1.0;
++				torque(2) = 0.0;
++			}
++		}
++		float output = sl_mixer[motor_id]->mix(calibed_angle, v_motor_enc.motor_rpm, thrust, torque);
++		if (_debug_mode == DEBUG_THRUST_ONLY) {
++		    output = math::constrain(_manual_control_setpoint.z, 0.0f, 1.0f);
++		}
++		v_actuator_controls_output.control[motor_id] = output;
++		v_actuator_controls_output.timestamp = ts;
++		_actuators_pub.publish(v_actuator_controls_output);
++		mix_count += 1;
++		// sl_mixer[motor_id]->print_status();
++		// PX4_INFO("motor %d ctrl:%.1f ABS pos:%.1f caled %.1f rpm:%.1f actuator: %.2f %.2f %.2f %.2f",
++		// 	v_motor_enc.motor_id, (double) output, (double) (v_motor_enc.motor_abs_angle*M_RAD_TO_DEG_F),
++		// 	(double) (calibed_angle*M_RAD_TO_DEG_F), (double) v_motor_enc.motor_rpm, (double) v_actuator_controls.control[0],
++		// 	(double) v_actuator_controls.control[1], (double) v_actuator_controls.control[2], (double) v_actuator_controls.control[3]);
++	}
++	perf_end(_loop_perf);
++}
++
++int SwashplatelessMixer::task_spawn(int argc, char *argv[])
++{
++	SwashplatelessMixer *instance = new SwashplatelessMixer();
++
++	if (instance) {
++		_object.store(instance);
++		_task_id = task_id_is_work_queue;
++
++		if (instance->init()) {
++			return PX4_OK;
++		}
++
++	} else {
++		PX4_ERR("alloc failed");
++	}
++
++	delete instance;
++	_object.store(nullptr);
++	_task_id = -1;
++
++	return PX4_ERROR;
++}
++
++int SwashplatelessMixer::custom_command(int argc, char *argv[])
++{
++	return print_usage("unknown command");
++}
++
++int SwashplatelessMixer::print_status()
++{
++	PX4_INFO("SwashplatelessMixer total freq %.1f", (double) mix_freq);
++	for (int i = 0; i < MAX_SL_MOTOR_NUM; i++) {
++		PX4_INFO("Mixer %d:", i);
++		sl_mixer[i]->print_status();
++	}
++	//Print loop perf
++	perf_print_counter(_loop_perf);
++	return 0;
++}
++
++int SwashplatelessMixer::print_usage(const char *reason)
++{
++	if (reason) {
++		PX4_WARN("%s\n", reason);
++	}
++
++	PRINT_MODULE_DESCRIPTION(
++		R"DESCR_STR(
++### Description
++Mixer for swashplateless helicoper
++
++)DESCR_STR");
++
++	PRINT_MODULE_USAGE_NAME("swashplateless_mixer", "controller");
++	PRINT_MODULE_USAGE_COMMAND("start");
++	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
++
++	return 0;
++}
++
++int swashplateless_mixer_main(int argc, char *argv[])
++{
++	return SwashplatelessMixer::main(argc, argv);
++}
+diff --git a/src/modules/swashplateless_mixer/swashplateless_mixer_params.c b/src/modules/swashplateless_mixer/swashplateless_mixer_params.c
+new file mode 100644
+index 0000000000..2ee6416e85
+--- /dev/null
++++ b/src/modules/swashplateless_mixer/swashplateless_mixer_params.c
+@@ -0,0 +1,163 @@
++/**
++ * Swashplateless gain
++ *
++ * Swashplateless gain, i.e..
++ *
++ * @min 0.0
++ * @max 10
++ * @decimal 2
++ * @increment 0.1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_GAIN, 1.0f);
++
++/**
++ * Swashplateless calib 0
++ *
++ * Swashplateless calib 0, i.e..
++ *
++ * @min 0.0
++ * @max 360.0
++ * @decimal 2
++ * @increment 0.1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_CALIB_0, 0.0f);
++
++
++/**
++ * Swashplateless calib 1
++ *
++ * Swashplateless calib 1, i.e..
++ *
++ * @min 0.0
++ * @max 360.0
++ * @decimal 2
++ * @increment 0.1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_CALIB_1, 0.0f);
++
++
++/**
++ * Motor 0 mix direction
++ *
++ * Motor 0 mix direction
++ *
++ * @min -1
++ * @max 1
++ * @increment 1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_INT32(SL_DIR_0, 1);
++
++/**
++ * Motor 1 mix direction
++ *
++ * Motor 1 mix direction
++ *
++ * @min -1
++ * @max 1
++ * @increment 1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_INT32(SL_DIR_1, -1);
++
++/**
++ * Swashplateless phase offset 0
++ *
++ * Swashplateless  phase offset 0, i.e..
++ *
++ * @min -180
++ * @max 180.0
++ * @decimal 2
++ * @increment 0.1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_PHASE_OFF_0, 0.0f);
++
++/**
++ * Swashplateless phase offset 1
++ *
++ * Swashplateless  phase offset 1, i.e..
++ *
++ * @min -180
++ * @max 180.0
++ * @decimal 2
++ * @increment 0.1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_PHASE_OFF_1, 0.0f);
++
++/**
++ * Swashplateless gain force
++ *
++ * Swashplateless gain for force, i.e..
++ *
++ * @min 0.0
++ * @max 10
++ * @decimal 3
++ * @increment 0.001
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_GAIN_FORCE, 1.0f);
++
++/**
++ * Swashplateless gain torque
++ *
++ * Swashplateless TPP gain for torque, i.e..
++ *
++ * @min 0.0
++ * @max 10
++ * @decimal 3
++ * @increment 0.001
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_GAIN_TORQUE, 0.1f);
++
++/**
++ * Swashplateless position of first motor
++ *
++ * Swashplateless  position of first motor. + is above
++ *
++ * @min -100
++ * @max 100.0
++ * @decimal 2
++ * @increment 0.1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_PROP_POS_0, 0.05f);
++
++/**
++ * Swashplateless position of second motor
++ *
++ * Swashplateless  position of second motor. + is above
++ *
++ * @min -100
++ * @max 100.0
++ * @decimal 2
++ * @increment 0.1
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_FLOAT(SL_PROP_POS_1, -0.05f);
++
++
++/**
++ * Swashplateless Debug mode
++ *
++ * Swashplateless  debug 0 is disable, 1 is input from RC, 2 is fixed torque on roll, 3 is fixed torque on pitch
++ * DEBUG_DISABLE
++ * 		Disable Debug Mode
++ * DEBUG_PASSTHROUGH_RC
++ * 		Passthrough from RC
++ * DEBUG_ROLL_TORQUE
++ * 		Fix torque on roll
++ * DEBUG_PITCH_TORQUE
++ * 		Fix torque on pitch
++ * @value 0 Disable Debug
++ * @value 1 Passthrough from RC
++ * @value 2 Fix torque on roll
++ * @value 3 Fix torque on pitch
++ * @group Swashplate Mixer
++ */
++PARAM_DEFINE_INT32(SL_DEBUG_MOD, 0);
