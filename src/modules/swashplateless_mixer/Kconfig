@@ -1,0 +1,6 @@
+menuconfig MODULES_SWASHPLATELESS_MIXER
+	bool "swashplateless_mixer"
+	default n
+	---help---
+		Enable support for swashplateless_mixer
+

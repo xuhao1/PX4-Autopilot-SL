@@ -62,7 +62,7 @@ private:
 	uORB::SubscriptionCallbackWorkItem  _sensor_motor_encoder_sub{this, ORB_ID(sensor_motor_encoder)};	/**< manual control setpoint subscription */
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
 
-	uORB::Publication<actuator_controls_s>		_actuators_pub{ORB_ID(actuator_controls_5)}; //Publish to group 2, and pass mixer run on group 5
+	uORB::Publication<actuator_controls_s>		_actuators_pub{ORB_ID(actuator_controls_3)}; //Publish to group 2, and pass mixer run on group 3
 
 	actuator_controls_s v_actuator_controls{};
 	actuator_controls_s v_actuator_controls_output{};

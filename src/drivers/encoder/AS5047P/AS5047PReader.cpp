@@ -114,6 +114,10 @@ float AS5047PReader::readAngle() {
 	ReadDataFrame readDataFrame = readRegister(ANGLE_REG);
 	Angle angle;
 	angle.raw = readDataFrame.values.data;
+	if (angle.raw != 0) {
+		// Check for error
+		ecoder_ok = true;
+	}
 	return ((float)angle.values.cordicang)/16384.f*2.0f*M_PI_F;
 }
 
